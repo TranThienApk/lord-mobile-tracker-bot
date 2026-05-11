@@ -58,14 +58,15 @@ end
 
 local function logToDiscord(msg, color)
     if not CONFIG.WEBHOOK or CONFIG.WEBHOOK == "" then return end
-    pcall(function()
-        req({
-            Url = CONFIG.WEBHOOK,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = Http:JSONEncode({embeds = {{description = msg, color = color or 0x00ccff}}})
-        })
-    end)
+    local res, err = safeRequest({
+        Url = CONFIG.WEBHOOK,
+        Method = "POST",
+        Headers = {["Content-Type"] = "application/json"},
+        Body = Http:JSONEncode({embeds = {{description = tostring(msg), color = color or 0x00ccff}}})
+    })
+    if err or not res then
+        warn("Discord log fail: " .. tostring(err or "no_response"))
+    end
 end
 
 local function reportError(title, err, extra)
@@ -191,7 +192,11 @@ local function processMail(mail)
     if type(mail) ~= "table" then return end
 
     local uuid = tostring(mail.uuid or mail.UUID or mail.id or "")
-    if uuid == "" or seenUUIDs[uuid] or processingUUIDs[uuid] then return end
+    if uuid == "" then
+        reportError("Mail parse fail", "missing uuid", Http:JSONEncode(mail):sub(1, 200))
+        return
+    end
+    if seenUUIDs[uuid] or processingUUIDs[uuid] then return end
     processingUUIDs[uuid] = true
 
     local sender = tostring(mail.SenderName or mail.sender or mail.From or "?")
@@ -242,22 +247,41 @@ end
 local function checkInbox(data)
     local inbox = extractInbox(data)
     if not inbox then
-        pcall(function()
-            inbox = extractInbox(network.Invoke("Mailbox: Get"))
+        local ok, response = pcall(function()
+            return network.Invoke("Mailbox: Get")
         end)
+        if ok then
+            inbox = extractInbox(response)
+        else
+            reportError("Mailbox get fail", response)
+        end
     end
 
     if type(inbox) == "table" then
+        local count = 0
         for _, mail in pairs(inbox) do
+            count = count + 1
             processMail(mail)
         end
+        if count == 0 then
+            logToDiscord("ℹ️ **Inbox empty** | `" .. plr.Name .. "`", 0x888888)
+        end
+    else
+        reportError("Inbox scan fail", "invalid inbox format", Http:JSONEncode(inbox or {}):sub(1, 200))
     end
 end
 
+local started = false
 pcall(function()
-    Net["Inbox Updated"].OnClientEvent:Connect(function(data)
-        checkInbox(data)
-    end)
+    local inboxEvent = Net and Net:FindFirstChild("Inbox Updated") or Net and Net["Inbox Updated"]
+    if inboxEvent and inboxEvent.OnClientEvent then
+        inboxEvent.OnClientEvent:Connect(function(data)
+            started = true
+            checkInbox(data)
+        end)
+    else
+        reportError("Hook fail", "Inbox Updated event missing")
+    end
 end)
 
 logToDiscord("🤖 **Mailbox Reader Started:** `" .. plr.Name .. "`", 0x00ff00)
@@ -285,6 +309,10 @@ while true do
     end)
     if not okCheck then
         reportError("Inbox scan fail", errCheck)
+    end
+
+    if not started then
+        logToDiscord("ℹ️ **Waiting for Inbox Updated event** | `" .. plr.Name .. "`", 0x888888)
     end
 
     task.wait(CONFIG.SCAN_INTERVAL)
