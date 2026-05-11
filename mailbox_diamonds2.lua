@@ -13,6 +13,9 @@ local CONFIG = {
     POLL_INTERVAL = 5,
 }
 
+local baseUrl = "https://autogemstore.online"
+local botKey = CONFIG.BOT_SECRET
+
 local Http = game:GetService("HttpService")
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
