@@ -66,7 +66,7 @@ local function notify(title, text)
 end
 
 local function logToDiscord(msg, color)
-    if not CONFIG.WEBHOOK or CONFIG.WEBHOOK == "" then return end
+    if not CONFIG.WEBHOOK or CONFIG.WEBHOOK == "" then return false end
     local res, err = safeRequest({
         Url = CONFIG.WEBHOOK,
         Method = "POST",
@@ -75,7 +75,9 @@ local function logToDiscord(msg, color)
     })
     if err or not res then
         warn("Discord log fail: " .. tostring(err or "no_response"))
+        return false
     end
+    return true
 end
 
 local function reportError(title, err, extra)
@@ -228,15 +230,20 @@ local function processMail(mail)
 
     local ok, action, reason, statusCode, body = reportMail(sender, message, amount, uuid, itemText)
     if not ok then
-        logToDiscord(
-            "⚠️ **Report fail** | `" .. plr.Name .. "`\n" ..
-            "UUID: `" .. uuid:sub(1, 8) .. "...`\n" ..
-            "Status: `" .. tostring(statusCode or "?") .. "`\n" ..
-            "Reason: `" .. tostring(reason or "unknown") .. "`\n" ..
-            "Body: `" .. tostring(body or ""):sub(1, 180) .. "`",
-            0xff8800
-        )
-        reportError("Mail report fail", reason or "unknown", body)
+        local lowerReason = string.lower(tostring(reason or ""))
+        if lowerReason:find("already processed", 1, true) or lowerReason:find("not found", 1, true) then
+            logToDiscord("ℹ️ **Duplicate/processed mail skipped** | `" .. plr.Name .. "`\nUUID: `" .. uuid:sub(1, 8) .. "...`\nReason: `" .. tostring(reason or "") .. "`", 0xaaaaaa)
+        else
+            logToDiscord(
+                "⚠️ **Report fail** | `" .. plr.Name .. "`\n" ..
+                "UUID: `" .. uuid:sub(1, 8) .. "...`\n" ..
+                "Status: `" .. tostring(statusCode or "?") .. "`\n" ..
+                "Reason: `" .. tostring(reason or "unknown") .. "`\n" ..
+                "Body: `" .. tostring(body or ""):sub(1, 180) .. "`",
+                0xff8800
+            )
+            reportError("Mail report fail", reason or "unknown", body)
+        end
     elseif action == "CLAIM" then
         if amount > 0 then
             sleep(CONFIG.CLAIM_DELAY)
@@ -313,7 +320,10 @@ if not okHook then
     reportError("Hook crash", hookErr)
 end
 
-logToDiscord("🤖 **Mailbox Reader Started:** `" .. plr.Name .. "`", 0x00ff00)
+local startOk = logToDiscord("🤖 **Mailbox Reader Started:** `" .. plr.Name .. "`", 0x00ff00)
+if not startOk then
+    warn("Mailbox reader start log failed")
+end
 notify("Mailbox Reader", "Đang quét và đọc inbox...")
 
 local lastPing = 0
