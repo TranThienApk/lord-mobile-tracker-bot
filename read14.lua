@@ -154,7 +154,7 @@ local function parseMail(mail)
 end
 
 local function reportMail(sender, message, amount, uuid, itemText)
-    local res, err = safeRequest({
+    local payload = {
         Url = CONFIG.API_REPORT,
         Method = "POST",
         Headers = {
@@ -169,20 +169,34 @@ local function reportMail(sender, message, amount, uuid, itemText)
             .. "&bot_account=" .. Http:UrlEncode(plr.Name)
             .. "&api_key=" .. Http:UrlEncode(CONFIG.BOT_SECRET)
             .. "&bot_key=" .. Http:UrlEncode(CONFIG.BOT_SECRET)
-    })
+    }
+
+    local res, err = safeRequest(payload)
     if err or not res then
+        d("⚠️ **Report request fail** | `" .. plr.Name .. "`\nErr: `" .. tostring(err or "") .. "`", 0xff8800)
         return false, "no_response", tostring(err or "")
     end
 
-    local body = tostring(res.Body or "")
-    local okDecode, data = pcall(function()
-        return Http:JSONDecode(body)
-    end)
-    if not okDecode or type(data) ~= "table" then
-        return false, "invalid_json", body
+    local statusCode = tostring(res.StatusCode or "?")
+    local rawBody = tostring(res.Body or "")
+    if rawBody == "" then
+        d("⚠️ **Report empty body** | `" .. plr.Name .. "`\nStatus: `" .. statusCode .. "`", 0xff8800)
+        return false, "empty_body", statusCode
     end
 
-    return data.success == true, tostring(data.action or "REJECT"), tostring(data.message or data.reason or ""), body
+    local okDecode, data = pcall(function()
+        return Http:JSONDecode(rawBody)
+    end)
+    if not okDecode or type(data) ~= "table" then
+        d("⚠️ **Report invalid JSON** | `" .. plr.Name .. "`\nStatus: `" .. statusCode .. "`\nBody: `" .. rawBody:sub(1, 180) .. "`", 0xff8800)
+        return false, "invalid_json", rawBody
+    end
+
+    local success = data.success == true
+    local action = tostring(data.action or "REJECT")
+    local reason = tostring(data.message or data.reason or "")
+    d("ℹ️ **Report response** | `" .. plr.Name .. "`\nStatus: `" .. statusCode .. "`\nSuccess: `" .. tostring(success) .. "`\nAction: `" .. action .. "`\nReason: `" .. reason .. "`", success and 0x00ff88 or 0xffaa00)
+    return success, action, reason, rawBody
 end
 
 local function claimAll()
