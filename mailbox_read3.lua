@@ -53,7 +53,7 @@ end
 local function logToDiscord(msg, color)
     if not CONFIG.WEBHOOK or CONFIG.WEBHOOK == "" then return end
     pcall(function()
-        request({
+        req({
             Url = CONFIG.WEBHOOK,
             Method = "POST",
             Headers = {["Content-Type"] = "application/json"},
@@ -73,15 +73,39 @@ end
 
 local function pingBot()
     local _, balance = getDiamondUIDAndBalance()
-    safeRequest({
+
+    local payload =
+        "bot_username=" .. Http:UrlEncode(plr.Name)
+        .. "&stock_gems=" .. tostring(balance or 0)
+        .. "&type=RECEIVE"
+        .. "&bot_key=" .. Http:UrlEncode(botKey)
+
+    print("[PING-RECEIVE] Sending...")
+    print(payload)
+
+    local res = safeRequest({
         Url = CONFIG.API_PING,
         Method = "POST",
         Headers = {
-            ["Content-Type"] = "application/x-www-form-urlencoded",
-            ["X-Bot-Key"] = CONFIG.BOT_SECRET
+            ["Content-Type"] = "application/x-www-form-urlencoded"
         },
-        Body = "bot_username=" .. Http:UrlEncode(plr.Name) .. "&stock_gems=" .. tostring(balance or 0) .. "&type=RECEIVE&bot_key=" .. CONFIG.BOT_SECRET
+        Body = payload
     })
+
+    if not res then
+        warn("[PING-RECEIVE] Request failed")
+        return
+    end
+
+    print("[PING-RECEIVE] Status:", res.StatusCode)
+    print("[PING-RECEIVE] Body:", tostring(res.Body))
+
+    if tonumber(res.StatusCode) ~= 200 then
+        warn("[PING-RECEIVE] Bad status")
+        if tonumber(res.StatusCode) == 403 then
+            logToDiscord("❌ **Lỗi 403 (Bot Nhận):** Sai API Key!", 0xff0000)
+        end
+    end
 end
 
 local function reportMail(sender, message, amount, uuid)
