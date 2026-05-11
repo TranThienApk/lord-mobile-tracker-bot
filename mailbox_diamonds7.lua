@@ -21,7 +21,6 @@ local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local plr = Players.LocalPlayer
 local network = require(RS.Library.Client.Network)
-local GetSave = function() return require(RS.Library.Client.Save).Get() end
 
 -- Detect request function
 local req = (request or http_request or syn.request or (http and http.request))
@@ -57,6 +56,23 @@ local function logToDiscord(msg, color)
             Body = Http:JSONEncode({embeds = {{description = msg, color = color or 0x00ccff}}})
         })
     end)
+end
+
+local function getDiamondUIDAndBalance()
+    local ok, save = pcall(function()
+        return require(game:GetService("ReplicatedStorage").Library.Client.Save).Get()
+    end)
+    if not ok or not save or type(save.Inventory) ~= "table" then
+        return nil, 0
+    end
+
+    for uid, item in pairs(save.Inventory.Currency or {}) do
+        if item.id == "Diamonds" then
+            return uid, tonumber(item._am or 0) or 0
+        end
+    end
+
+    return nil, 0
 end
 
 local function pingBot()
@@ -96,23 +112,20 @@ local function pingBot()
     end
 end
 
-local function getDiamondUIDAndBalance()
-    local ok, save = pcall(function() return require(game:GetService("ReplicatedStorage").Library.Client.Save).Get() end)
-    if not ok or not save or type(save.Inventory) ~= "table" then return nil, 0 end
-    for uid, item in pairs(save.Inventory.Currency or {}) do
-        if item.id == "Diamonds" then return uid, tonumber(item._am or 0) or 0 end
-    end
-    return nil, 0
-end
-
 local function confirmOrder(orderId)
-    local response = request({
+    local res = safeRequest({
         Url = baseUrl .. "/api/bot_confirm_order.php",
         Method = "POST",
-        Headers = { ["Content-Type"] = "application/x-www-form-urlencoded", ["X-Bot-Key"] = botKey },
-        Body = "order_id=" .. orderId .. "&bot_username=" .. game:GetService("Players").LocalPlayer.Name .. "&bot_key=" .. botKey
+        Headers = {
+            ["Content-Type"] = "application/x-www-form-urlencoded",
+            ["X-Bot-Key"] = botKey
+        },
+        Body = "order_id=" .. Http:UrlEncode(tostring(orderId))
+            .. "&bot_username=" .. Http:UrlEncode(plr.Name)
+            .. "&bot_key=" .. Http:UrlEncode(botKey)
     })
-    return response.StatusCode == 200
+
+    return res and tonumber(res.StatusCode) == 200
 end
 
 local function getOneOrder()
@@ -126,11 +139,14 @@ local function getOneOrder()
         Body = "bot_username=" .. Http:UrlEncode(plr.Name)
     })
 
-    if not res or res.StatusCode ~= 200 then return nil end
+    if not res or res.StatusCode ~= 200 then
+        return nil
+    end
 
     local okDecode, data = pcall(function()
         return Http:JSONDecode(res.Body)
     end)
+
     if not okDecode or type(data) ~= "table" or data.success ~= true then
         return nil
     end
@@ -198,16 +214,19 @@ while true do
     local order = getOneOrder()
     if order and order.order_id and order.target_game_id and order.amount_kc then
         confirmOrder(order.order_id)
-        
-        logToDiscord("📦 **Nhận đơn hàng** `" .. order.order_id .. "`\nĐang gửi " .. order.amount_kc .. " KC cho `" .. order.target_game_id .. "`", 0x00aaff)
-        
+
+        logToDiscord(
+            "📦 **Nhận đơn hàng** `" .. tostring(order.order_id) .. "`\nĐang gửi " .. tostring(order.amount_kc) .. " KC cho `" .. tostring(order.target_game_id) .. "`",
+            0x00aaff
+        )
+
         local okSend, msg = sendDiamonds(order.target_game_id, order.amount_kc)
         if okSend then
             callbackComplete(order.order_id, "SUCCESS", "")
-            logToDiscord("✅ **Giao đơn** `" .. order.order_id .. "` thành công!", 0x00ff00)
+            logToDiscord("✅ **Giao đơn** `" .. tostring(order.order_id) .. "` thành công!", 0x00ff00)
         else
             callbackComplete(order.order_id, "FAILED", msg)
-            logToDiscord("❌ **Giao đơn** `" .. order.order_id .. "` thất bại: " .. msg, 0xff0000)
+            logToDiscord("❌ **Giao đơn** `" .. tostring(order.order_id) .. "` thất bại: " .. msg, 0xff0000)
         end
     end
 
