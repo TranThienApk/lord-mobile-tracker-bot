@@ -50,7 +50,7 @@ end
 local function logToDiscord(msg, color)
     if not CONFIG.WEBHOOK or CONFIG.WEBHOOK == "" then return end
     pcall(function()
-        request({
+        req({
             Url = CONFIG.WEBHOOK,
             Method = "POST",
             Headers = {["Content-Type"] = "application/json"},
@@ -61,24 +61,38 @@ end
 
 local function pingBot()
     local _, balance = getDiamondUIDAndBalance()
-    local payload = "bot_username=" .. Http:UrlEncode(plr.Name) .. "&stock_gems=" .. tostring(balance or 0) .. "&type=SEND&bot_key=" .. botKey
+
+    local payload =
+        "bot_username=" .. Http:UrlEncode(plr.Name)
+        .. "&stock_gems=" .. tostring(balance or 0)
+        .. "&type=SEND"
+        .. "&bot_key=" .. Http:UrlEncode(botKey)
+
+    print("[PING] Sending...")
+    print(payload)
+
     local res = safeRequest({
-        Url = baseUrl .. "/api/bot_ping.php",
+        Url = CONFIG.PING_API,
         Method = "POST",
         Headers = {
-            ["Content-Type"] = "application/x-www-form-urlencoded",
-            ["X-Bot-Key"] = botKey
+            ["Content-Type"] = "application/x-www-form-urlencoded"
         },
         Body = payload
     })
-    if res then
-        if res.StatusCode ~= 200 then
-            logToDiscord("❌ **Lỗi Kết Nối Bot:** `" .. plr.Name .. "`\nStatus: " .. tostring(res.StatusCode) .. "\nResponse: " .. tostring(res.Body), 0xff0000)
+
+    if not res then
+        warn("[PING] Request failed")
+        return
+    end
+
+    print("[PING] Status:", res.StatusCode)
+    print("[PING] Body:", tostring(res.Body))
+
+    if tonumber(res.StatusCode) ~= 200 then
+        warn("[PING] Bad status")
+        if tonumber(res.StatusCode) == 403 then
+            logToDiscord("❌ **Lỗi 403 Forbidden:** Sai API Key!", 0xff0000)
         end
-        print("Status: " .. tostring(res.StatusCode))
-    else
-        logToDiscord("❌ **Bot Không Thể Kết Nối Server:** `" .. plr.Name .. "`\nVui lòng kiểm tra lại Domain hoặc Hosting!", 0xff0000)
-        print("❌ KHÔNG KẾT NỐI ĐƯỢC SERVER!")
     end
 end
 
