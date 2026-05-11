@@ -28,6 +28,15 @@ _G.AutoGemStoreMailboxReaderRunning = true
 
 local seenUUIDs = {}
 local processingUUIDs = {}
+local lastDebugLog = 0
+
+local function sleep(sec)
+    if task and task.wait then
+        task.wait(sec)
+    else
+        wait(sec)
+    end
+end
 
 -- Detect request function
 local req = (request or http_request or syn.request or (http and http.request))
@@ -41,9 +50,9 @@ local function safeRequest(payload)
         return req(payload)
     end)
     if not ok then
-        return nil, res
+        return nil, tostring(res)
     end
-    return res
+    return res, nil
 end
 
 local function notify(title, text)
@@ -80,7 +89,9 @@ local function reportError(title, err, extra)
 end
 
 local function getDiamondUIDAndBalance()
-    local ok, save = pcall(function() return require(game:GetService("ReplicatedStorage").Library.Client.Save).Get() end)
+    local ok, save = pcall(function()
+        return require(RS.Library.Client.Save).Get()
+    end)
     if not ok or not save or type(save.Inventory) ~= "table" then return nil, 0 end
     for uid, item in pairs(save.Inventory.Currency or {}) do
         if item.id == "Diamonds" then return uid, tonumber(item._am or 0) or 0 end
@@ -160,9 +171,12 @@ end
 
 local function claimMail(uuid)
     if not uuid then return end
-    pcall(function()
+    local ok, err = pcall(function()
         network.Invoke("Mailbox: Claim", tostring(uuid))
     end)
+    if not ok then
+        reportError("Claim fail", err, uuid)
+    end
 end
 
 local function parseItemText(item)
@@ -224,7 +238,7 @@ local function processMail(mail)
         reportError("Mail report fail", reason or "unknown", body)
     elseif action == "CLAIM" then
         if amount > 0 then
-            task.wait(CONFIG.CLAIM_DELAY)
+            sleep(CONFIG.CLAIM_DELAY)
             claimMail(uuid)
         end
         logToDiscord("✅ **Mail accepted** | `" .. plr.Name .. "`\nSender: `" .. sender .. "`\nAmount: `" .. tostring(amount) .. "`", 0x00ff88)
@@ -254,52 +268,70 @@ local function checkInbox(data)
             inbox = extractInbox(response)
         else
             reportError("Mailbox get fail", response)
+            return
         end
     end
 
-    if type(inbox) == "table" then
-        local count = 0
-        for _, mail in pairs(inbox) do
-            count = count + 1
-            processMail(mail)
-        end
-        if count == 0 then
-            logToDiscord("ℹ️ **Inbox empty** | `" .. plr.Name .. "`", 0x888888)
-        end
-    else
-        reportError("Inbox scan fail", "invalid inbox format", Http:JSONEncode(inbox or {}):sub(1, 200))
+    if type(inbox) ~= "table" then
+        reportError("Inbox scan fail", "invalid inbox format")
+        return
+    end
+
+    local count = 0
+    for _, mail in pairs(inbox) do
+        count = count + 1
+        processMail(mail)
+    end
+
+    local now = os.time()
+    if count == 0 and now - lastDebugLog >= 30 then
+        lastDebugLog = now
+        logToDiscord("ℹ️ **Inbox empty / scanner alive** | `" .. plr.Name .. "`", 0x888888)
     end
 end
 
-local started = false
-pcall(function()
-    local inboxEvent = Net and Net:FindFirstChild("Inbox Updated") or Net and Net["Inbox Updated"]
+local eventTriggered = false
+local okHook, hookErr = pcall(function()
+    local inboxEvent = Net and (Net:FindFirstChild("Inbox Updated") or Net["Inbox Updated"])
     if inboxEvent and inboxEvent.OnClientEvent then
         inboxEvent.OnClientEvent:Connect(function(data)
-            started = true
-            checkInbox(data)
+            eventTriggered = true
+            local okEvent, eventErr = pcall(function()
+                checkInbox(data)
+            end)
+            if not okEvent then
+                reportError("Inbox event fail", eventErr)
+            end
         end)
+        logToDiscord("✅ **Inbox hook OK** | `" .. plr.Name .. "`", 0x00ff88)
     else
         reportError("Hook fail", "Inbox Updated event missing")
     end
 end)
+if not okHook then
+    reportError("Hook crash", hookErr)
+end
 
 logToDiscord("🤖 **Mailbox Reader Started:** `" .. plr.Name .. "`", 0x00ff00)
 notify("Mailbox Reader", "Đang quét và đọc inbox...")
 
 local lastPing = 0
-local okPing = pingBot()
-if not okPing then
-    reportError("Startup ping fail", "pingBot returned false")
+local okPing, pingErr = pcall(function()
+    return pingBot()
+end)
+if not okPing or pingErr ~= true then
+    reportError("Startup ping fail", tostring(pingErr))
 end
 lastPing = os.time()
 
 while true do
     local now = os.time()
     if now - lastPing >= CONFIG.PING_INTERVAL then
-        local okNow = pingBot()
-        if not okNow then
-            reportError("Periodic ping fail", "pingBot returned false")
+        local okNow, pingResult = pcall(function()
+            return pingBot()
+        end)
+        if not okNow or pingResult ~= true then
+            reportError("Periodic ping fail", tostring(pingResult))
         end
         lastPing = now
     end
@@ -308,12 +340,13 @@ while true do
         checkInbox()
     end)
     if not okCheck then
-        reportError("Inbox scan fail", errCheck)
+        reportError("Inbox scan crash", errCheck)
     end
 
-    if not started then
-        logToDiscord("ℹ️ **Waiting for Inbox Updated event** | `" .. plr.Name .. "`", 0x888888)
+    if not eventTriggered and now - lastDebugLog >= 30 then
+        lastDebugLog = now
+        logToDiscord("ℹ️ **Scanner alive, waiting event/mail** | `" .. plr.Name .. "`", 0x888888)
     end
 
-    task.wait(CONFIG.SCAN_INTERVAL)
+    sleep(CONFIG.SCAN_INTERVAL)
 end
