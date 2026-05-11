@@ -61,15 +61,23 @@ end
 
 local function pingBot()
     local _, balance = getDiamondUIDAndBalance()
-    safeRequest({
+    local payload = "bot_username=" .. Http:UrlEncode(plr.Name) .. "&stock_gems=" .. tostring(balance or 0) .. "&type=SEND&bot_key=" .. botKey
+    local res = safeRequest({
         Url = baseUrl .. "/api/bot_ping.php",
         Method = "POST",
         Headers = {
             ["Content-Type"] = "application/x-www-form-urlencoded",
             ["X-Bot-Key"] = botKey
         },
-        Body = "bot_username=" .. Http:UrlEncode(plr.Name) .. "&stock_gems=" .. tostring(balance or 0) .. "&type=SEND&bot_key=" .. botKey
+        Body = payload
     })
+    if res then
+        print("--- DEBUG PING ---")
+        print("Status: " .. tostring(res.StatusCode))
+        print("Response: " .. tostring(res.Body))
+    else
+        print("❌ KHÔNG KẾT NỐI ĐƯỢC SERVER!")
+    end
 end
 
 local function getDiamondUIDAndBalance()
