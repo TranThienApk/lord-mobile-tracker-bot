@@ -22,6 +22,7 @@ local Net = RS.Network
 local network = require(RS.Library.Client.Network)
 
 local seenUUIDs = {}
+local processingUUIDs = {}
 
 -- Detect request function
 local req = (request or http_request or syn.request or (http and http.request))
@@ -30,11 +31,14 @@ if not req then
 end
 
 local function safeRequest(payload)
-    if not req then return nil end
+    if not req then return nil, "request_not_supported" end
     local ok, res = pcall(function()
         return req(payload)
     end)
-    return ok and res or nil
+    if not ok then
+        return nil, res
+    end
+    return res
 end
 
 local function notify(title, text)
@@ -59,6 +63,16 @@ local function logToDiscord(msg, color)
     end)
 end
 
+local function reportError(title, err, extra)
+    local text = "❌ **" .. tostring(title or "Error") .. "**\n" ..
+        "• Bot: `" .. plr.Name .. "`\n" ..
+        "• Lỗi: `" .. tostring(err or "unknown") .. "`"
+    if extra and tostring(extra) ~= "" then
+        text = text .. "\n• Chi tiết: `" .. tostring(extra):sub(1, 250) .. "`"
+    end
+    logToDiscord(text, 0xff4444)
+end
+
 local function getDiamondUIDAndBalance()
     local ok, save = pcall(function() return require(game:GetService("ReplicatedStorage").Library.Client.Save).Get() end)
     if not ok or not save or type(save.Inventory) ~= "table" then return nil, 0 end
@@ -70,7 +84,7 @@ end
 
 local function pingBot()
     local _, balance = getDiamondUIDAndBalance()
-    safeRequest({
+    local res, err = safeRequest({
         Url = CONFIG.API_PING,
         Method = "POST",
         Headers = {
@@ -79,6 +93,11 @@ local function pingBot()
         },
         Body = "bot_username=" .. Http:UrlEncode(plr.Name) .. "&stock_gems=" .. tostring(balance or 0) .. "&type=RECEIVE&bot_key=" .. CONFIG.BOT_SECRET
     })
+    if err or not res then
+        reportError("Ping fail", err or "no_response", "stock_gems=" .. tostring(balance or 0))
+        return false
+    end
+    return true
 end
 
 local function fmtNumber(n)
@@ -111,18 +130,25 @@ local function reportMail(sender, message, amount, uuid, itemText)
             .. "&bot_username=" .. Http:UrlEncode(plr.Name)
     })
 
-    if err or not res or res.StatusCode ~= 200 then
-        return false, "network_error"
+    if err then
+        return false, "request_error", tostring(err), nil, nil
+    end
+    if not res then
+        return false, "no_response", "no response", nil, nil
     end
 
+    local body = tostring(res.Body or "")
     local okDecode, data = pcall(function()
-        return Http:JSONDecode(res.Body)
+        return Http:JSONDecode(body)
     end)
     if not okDecode or type(data) ~= "table" then
-        return false, "invalid_json"
+        return false, "invalid_json", body:sub(1, 180), res.StatusCode, body
     end
 
-    return data.success == true, data.action or "REJECT"
+    local success = data.success == true
+    local action = tostring(data.action or "REJECT")
+    local reason = tostring(data.reason or data.message or "")
+    return success, action, reason, res.StatusCode, body
 end
 
 local function claimMail(uuid)
@@ -159,13 +185,12 @@ local function processMail(mail)
     if type(mail) ~= "table" then return end
 
     local uuid = tostring(mail.uuid or mail.UUID or mail.id or "")
-    if uuid == "" or seenUUIDs[uuid] then return end
+    if uuid == "" or seenUUIDs[uuid] or processingUUIDs[uuid] then return end
+    processingUUIDs[uuid] = true
 
     local sender = tostring(mail.SenderName or mail.sender or mail.From or "?")
     local message = tostring(mail.Message or mail.message or mail.Text or "")
     local itemText, amount = parseItemText(mail.Item)
-
-    seenUUIDs[uuid] = true
 
     local mailText = "📬 **MAIL RECEIVED** | `" .. plr.Name .. "`\n" ..
         "👤 Sender: **" .. sender .. "**\n" ..
@@ -174,12 +199,30 @@ local function processMail(mail)
         "🆔 `" .. uuid:sub(1, 8) .. "...`"
 
     logToDiscord(mailText, 0x00ccff)
-    reportMail(sender, message, amount, uuid, itemText)
 
-    if amount > 0 then
-        task.wait(CONFIG.CLAIM_DELAY)
-        claimMail(uuid)
+    local ok, action, reason, statusCode, body = reportMail(sender, message, amount, uuid, itemText)
+    if not ok then
+        logToDiscord(
+            "⚠️ **Report fail** | `" .. plr.Name .. "`\n" ..
+            "UUID: `" .. uuid:sub(1, 8) .. "...`\n" ..
+            "Status: `" .. tostring(statusCode or "?") .. "`\n" ..
+            "Reason: `" .. tostring(reason or "unknown") .. "`\n" ..
+            "Body: `" .. tostring(body or ""):sub(1, 180) .. "`",
+            0xff8800
+        )
+        reportError("Mail report fail", reason or "unknown", body)
+    elseif action == "CLAIM" then
+        if amount > 0 then
+            task.wait(CONFIG.CLAIM_DELAY)
+            claimMail(uuid)
+        end
+        logToDiscord("✅ **Mail accepted** | `" .. plr.Name .. "`\nSender: `" .. sender .. "`\nAmount: `" .. tostring(amount) .. "`", 0x00ff88)
+    else
+        logToDiscord("ℹ️ **Mail reported but not claimed** | `" .. plr.Name .. "`\nAction: `" .. action .. "`\nReason: `" .. tostring(reason or "") .. "`", 0xaaaaaa)
     end
+
+    seenUUIDs[uuid] = true
+    processingUUIDs[uuid] = nil
 end
 
 local function extractInbox(response)
@@ -215,13 +258,28 @@ logToDiscord("🤖 **Mailbox Reader Started:** `" .. plr.Name .. "`", 0x00ff00)
 notify("Mailbox Reader", "Đang quét và đọc inbox...")
 
 local lastPing = 0
+local okPing = pingBot()
+if not okPing then
+    reportError("Startup ping fail", "pingBot returned false")
+end
+lastPing = os.time()
+
 while true do
     local now = os.time()
     if now - lastPing >= CONFIG.PING_INTERVAL then
-        pingBot()
+        local okNow = pingBot()
+        if not okNow then
+            reportError("Periodic ping fail", "pingBot returned false")
+        end
         lastPing = now
     end
 
-    checkInbox()
+    local okCheck, errCheck = pcall(function()
+        checkInbox()
+    end)
+    if not okCheck then
+        reportError("Inbox scan fail", errCheck)
+    end
+
     task.wait(CONFIG.SCAN_INTERVAL)
 end
