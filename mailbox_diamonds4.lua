@@ -72,10 +72,12 @@ local function pingBot()
         Body = payload
     })
     if res then
-        print("--- DEBUG PING ---")
+        if res.StatusCode ~= 200 then
+            logToDiscord("❌ **Lỗi Kết Nối Bot:** `" .. plr.Name .. "`\nStatus: " .. tostring(res.StatusCode) .. "\nResponse: " .. tostring(res.Body), 0xff0000)
+        end
         print("Status: " .. tostring(res.StatusCode))
-        print("Response: " .. tostring(res.Body))
     else
+        logToDiscord("❌ **Bot Không Thể Kết Nối Server:** `" .. plr.Name .. "`\nVui lòng kiểm tra lại Domain hoặc Hosting!", 0xff0000)
         print("❌ KHÔNG KẾT NỐI ĐƯỢC SERVER!")
     end
 end
