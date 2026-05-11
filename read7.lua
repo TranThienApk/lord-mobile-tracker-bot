@@ -21,6 +21,11 @@ local plr = Players.LocalPlayer
 local Net = RS.Network
 local network = require(RS.Library.Client.Network)
 
+if _G.AutoGemStoreMailboxReaderRunning then
+    return
+end
+_G.AutoGemStoreMailboxReaderRunning = true
+
 local seenUUIDs = {}
 local processingUUIDs = {}
 
@@ -54,7 +59,7 @@ end
 local function logToDiscord(msg, color)
     if not CONFIG.WEBHOOK or CONFIG.WEBHOOK == "" then return end
     pcall(function()
-        request({
+        req({
             Url = CONFIG.WEBHOOK,
             Method = "POST",
             Headers = {["Content-Type"] = "application/json"},
