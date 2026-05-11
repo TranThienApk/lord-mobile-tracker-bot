@@ -1,7 +1,7 @@
 -- =========================================================
--- AutoGemStore - PS99 Mailbox Receiver Bot (FIXED)
+-- AutoGemStore - PS99 Mailbox Receiver Bot (FULL VERSION)
 -- =========================================================
--- Tính năng: Đọc mail, báo cáo về server, tự động nhận quà
+-- Tính năng: Đọc mail, lấy balance hiện tại, báo cáo về server, tự động nhận quà
 
 local CONFIG = {
     BASE_URL = "https://autogemstore.online",
@@ -38,6 +38,34 @@ local function safeRequest(payload)
     end
 
     return res, nil
+end
+
+-- =========================================================
+-- GET BALANCE: Lấy số Diamonds hiện tại từ inventory
+-- =========================================================
+local function getBalance()
+    local ok, player = pcall(function()
+        return network.Invoke("Get Player")
+    end)
+    
+    if not ok or not player then
+        warn("[BALANCE] Failed to get player data")
+        return 0
+    end
+
+    -- Tìm Diamonds trong inventory
+    if type(player.Inventory) == "table" then
+        for _, item in pairs(player.Inventory) do
+            if type(item) == "table" and item.id == "Diamonds" then
+                local amount = math.floor(tonumber(item._am or item.amount or 0))
+                print("[BALANCE] Current Diamonds:", amount)
+                return amount
+            end
+        end
+    end
+    
+    warn("[BALANCE] Diamonds not found in inventory")
+    return 0
 end
 
 -- =========================================================
@@ -88,7 +116,7 @@ local function pingBot()
 end
 
 -- =========================================================
--- REPORT: Gửi thông tin mail đến server để xác nhận
+-- REPORT: Gửi thông tin mail + balance hiện tại đến server
 -- =========================================================
 local function reportMail(sender, message, amount, uuid)
     -- Validate inputs
@@ -96,6 +124,9 @@ local function reportMail(sender, message, amount, uuid)
         warn("[REPORT] Invalid input: sender=" .. tostring(sender) .. ", uuid=" .. tostring(uuid))
         return false, "REJECT"
     end
+
+    -- ✓ Lấy balance hiện tại
+    local currentBalance = getBalance()
 
     local res, err = safeRequest({
         Url = CONFIG.API_REPORT,
@@ -109,6 +140,7 @@ local function reportMail(sender, message, amount, uuid)
             .. "&amount=" .. tostring(amount)
             .. "&uuid=" .. Http:UrlEncode(tostring(uuid))
             .. "&bot_username=" .. Http:UrlEncode(plr.Name)
+            .. "&current_balance=" .. tostring(currentBalance)
     })
 
     -- ✓ Check request error
@@ -150,7 +182,7 @@ local function reportMail(sender, message, amount, uuid)
     local action = data.action or "REJECT"
 
     if success then
-        print("[REPORT OK]", uuid:sub(1, 8) .. "...", "Action:", action)
+        print("[REPORT OK]", uuid:sub(1, 8) .. "...", "Action:", action, "Balance:", currentBalance)
     else
         warn("[REPORT REJECTED]", uuid:sub(1, 8) .. "...", "Reason:", data.reason or "Unknown")
     end
@@ -227,7 +259,7 @@ local function processMail(mail)
 
     print("[MAIL FOUND]", sender, "→", amount, "Diamonds, UUID:", uuid:sub(1, 8) .. "...")
 
-    -- ✓ Báo cáo về server
+    -- ✓ Báo cáo về server (kèm balance hiện tại)
     local ok, action = reportMail(sender, message, amount, uuid)
 
     -- ✓ Nếu server cho phép → claim mail
@@ -277,6 +309,8 @@ end)
 -- MAIN LOOP: Quét inbox & ping server
 -- =========================================================
 local lastPing = 0
+
+print("[BOT STARTED]", plr.Name, "- AutoGemStore Mailbox Reader")
 
 while true do
     local now = os.time()
