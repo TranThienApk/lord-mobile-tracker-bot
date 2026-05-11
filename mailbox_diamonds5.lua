@@ -83,17 +83,11 @@ local function pingBot()
 end
 
 local function getDiamondUIDAndBalance()
-    local ok, save = pcall(GetSave)
-    if not ok or not save or type(save.Inventory) ~= "table" then
-        return nil, 0
-    end
-
+    local ok, save = pcall(function() return require(game:GetService("ReplicatedStorage").Library.Client.Save).Get() end)
+    if not ok or not save or type(save.Inventory) ~= "table" then return nil, 0 end
     for uid, item in pairs(save.Inventory.Currency or {}) do
-        if item.id == "Diamonds" then
-            return uid, tonumber(item._am or 0) or 0
-        end
+        if item.id == "Diamonds" then return uid, tonumber(item._am or 0) or 0 end
     end
-
     return nil, 0
 end
 
