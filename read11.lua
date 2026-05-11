@@ -146,6 +146,7 @@ local function reportMail(sender, message, amount, uuid, itemText)
             .. "&uuid=" .. Http:UrlEncode(tostring(uuid))
             .. "&bot_account=" .. Http:UrlEncode(plr.Name)
             .. "&api_key=" .. Http:UrlEncode(CONFIG.BOT_SECRET)
+            .. "&bot_key=" .. Http:UrlEncode(CONFIG.BOT_SECRET)
     })
 
     if err then
